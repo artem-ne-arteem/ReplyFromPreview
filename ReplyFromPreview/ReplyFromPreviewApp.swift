@@ -4,8 +4,7 @@ import SwiftUI
 struct ReplyFromPreviewApp: App {
     var body: some Scene {
         WindowGroup {
-            ChatListView()
-                .preferredColorScheme(.light)
+            RootView()
         }
     }
 }

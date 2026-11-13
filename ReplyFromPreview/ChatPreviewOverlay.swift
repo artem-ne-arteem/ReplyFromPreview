@@ -75,7 +75,7 @@ struct ChatPreviewOverlay: View {
         ZStack(alignment: .top) {
             ChatWallpaper()
 
-            MessagesList(messages: chat.messages, topInset: 70)
+            MessagesList(messages: chat.messages, topInset: 70, isTyping: store.typing.contains(chatID))
                 .mask(
                     LinearGradient(
                         stops: [

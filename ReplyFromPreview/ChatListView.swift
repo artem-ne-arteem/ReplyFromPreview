@@ -1,107 +1,151 @@
 import SwiftUI
+import Combine
 
 /// Хранит позиции строк списка, не вызывая перерисовку.
 final class FrameStore {
     var frames: [Chat.ID: CGRect] = [:]
 }
 
-struct ChatListView: View {
-    struct PreviewState: Equatable {
-        let id: Chat.ID
-        let frame: CGRect
-    }
+// MARK: - Вкладка «Чаты»
 
-    @State private var store = ChatStore()
-    @State private var frames = FrameStore()
-    @State private var preview: PreviewState?
-    @State private var openedChat: Chat.ID?
-    @State private var suppressTap = false
-    @State private var hapticTick = 0
+struct ChatsTab: View {
+    @Environment(AppModel.self) private var model
+    let store: ChatStore
+    let frames: FrameStore
+    let previewID: Chat.ID?
+    @Binding var editing: Bool
+    @Binding var selected: Set<Chat.ID>
+    @Binding var suppressTap: Bool
+    var onOpen: (Chat.ID) -> Void
+    var onPreview: (Chat.ID) -> Void
+    var onArchive: () -> Void
+
     @State private var folder: Folder = .all
-    @State private var tab: MainTab = .chats
+    @State private var composing = false
+    @State private var showStories = false
 
     var body: some View {
-        ZStack {
-            NavigationStack {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(store.chats(in: folder)) { chat in
-                            row(chat)
-                        }
-                    }
+        List {
+            if folder == .all, !store.archivedChats.isEmpty, !editing {
+                Button(action: onArchive) {
+                    ArchiveRow(chats: store.archivedChats)
                 }
-                .scrollIndicators(.hidden)
-                .background(Color.white)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    TopBar(store: store, folder: $folder)
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    BottomTabBar(selection: $tab)
-                }
-                .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(item: $openedChat) { id in
-                    ChatScreen(store: store, chatID: id)
-                }
+                .buttonStyle(RowPressStyle())
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.white)
             }
 
-            if let preview {
-                ChatPreviewOverlay(
-                    store: store,
-                    chatID: preview.id,
-                    sourceFrame: preview.frame,
-                    currentFrame: { frames.frames[preview.id] },
-                    onClose: {
-                        self.preview = nil
-                        suppressTap = false
-                    },
-                    onOpen: {
-                        openedChat = preview.id
-                        self.preview = nil
-                        suppressTap = false
-                    }
-                )
-                .zIndex(1)
+            ForEach(store.chats(in: folder)) { chat in
+                row(chat)
             }
         }
-        .sensoryFeedback(.impact(weight: .medium), trigger: hapticTick)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.white)
+        .environment(\.defaultMinListRowHeight, 0)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            TopBar(store: store, folder: $folder, editing: $editing,
+                   onCompose: { composing = true },
+                   onStories: { showStories = true })
+        }
+        .sheet(isPresented: $composing) {
+            NewMessageView(store: store) { id in
+                composing = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onOpen(id) }
+            }
+            .environment(model)
+        }
+        .fullScreenCover(isPresented: $showStories) {
+            StoryViewer()
+        }
     }
 
-    /// Кнопка + долгое нажатие поверх неё: так список нормально скроллится,
-    /// а после долгого нажатия обычный тап не открывает чат.
     private func row(_ chat: Chat) -> some View {
-        Button {
+        let isSelected = selected.contains(chat.id)
+        return Button {
+            if editing {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    if isSelected { selected.remove(chat.id) } else { selected.insert(chat.id) }
+                }
+                return
+            }
             if suppressTap {
                 suppressTap = false
                 return
             }
-            openedChat = chat.id
+            onOpen(chat.id)
         } label: {
-            ChatRow(chat: chat)
+            HStack(spacing: 0) {
+                if editing {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 23))
+                        .foregroundStyle(isSelected ? Color.tgBlue : Color(hex: 0xC4C4C7))
+                        .padding(.leading, 14)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                ChatRow(chat: chat, isTyping: store.typing.contains(chat.id))
+            }
+            .background(chat.isPinned ? Color.tgPinned : Color.white)
         }
         .buttonStyle(RowPressStyle())
-        .opacity(preview?.id == chat.id ? 0 : 1)
+        .opacity(previewID == chat.id ? 0 : 1)
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
         } action: { frame in
             frames.frames[chat.id] = frame
         }
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
-                guard preview == nil else { return }
-                suppressTap = true
-                hapticTick += 1
-                preview = PreviewState(id: chat.id, frame: frames.frames[chat.id] ?? .zero)
-            }
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in onPreview(chat.id) },
+            including: editing ? .subviews : .all
         )
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(chat.isPinned ? Color.tgPinned : Color.white)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) { delete(chat) } label: {
+                Label("Delete", systemImage: "trash.fill")
+            }
+            Button { archive(chat) } label: {
+                Label("Archive", systemImage: "archivebox.fill")
+            }
+            .tint(Color(hex: 0xA0A0A6))
+            Button {
+                withAnimation { store.toggleMute(chat.id) }
+            } label: {
+                Label(chat.isMuted ? "Unmute" : "Mute", systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+            }
+            .tint(.orange)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                withAnimation { store.toggleRead(chat.id) }
+            } label: {
+                Label(chat.unread > 0 ? "Read" : "Unread",
+                      systemImage: chat.unread > 0 ? "envelope.open.fill" : "envelope.badge.fill")
+            }
+            .tint(Color.tgBlue)
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { store.togglePin(chat.id) }
+            } label: {
+                Label(chat.isPinned ? "Unpin" : "Pin", systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill")
+            }
+            .tint(Color(hex: 0x34C759))
+        }
     }
-}
 
-struct RowPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .overlay(Color.black.opacity(configuration.isPressed ? 0.05 : 0))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.2), value: configuration.isPressed)
+    private func delete(_ chat: Chat) {
+        guard let removed = withAnimation(.default, { store.delete(chat.id) }) else { return }
+        model.showToast("Chat deleted", icon: "trash") {
+            withAnimation { store.restore(removed.chat, at: removed.index) }
+        }
+    }
+
+    private func archive(_ chat: Chat) {
+        withAnimation { store.setArchived(chat.id, true) }
+        model.showToast("Chat archived", icon: "archivebox") {
+            withAnimation { store.setArchived(chat.id, false) }
+        }
     }
 }
 
@@ -110,28 +154,25 @@ struct RowPressStyle: ButtonStyle {
 struct TopBar: View {
     let store: ChatStore
     @Binding var folder: Folder
+    @Binding var editing: Bool
+    var onCompose: () -> Void
+    var onStories: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
             ZStack {
                 HStack {
-                    Button {} label: {
-                        Text("Edit")
-                            .font(.system(size: 17))
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 14)
-                            .frame(height: 44)
-                            .contentShape(Capsule())
-                            .glass(Capsule(), interactive: true)
+                    CapsuleButton(title: editing ? "Done" : "Edit", tint: editing ? Color.tgBlue : .primary) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { editing.toggle() }
                     }
-                    .buttonStyle(.plain)
 
                     Spacer()
 
                     HStack(spacing: 22) {
-                        Image(systemName: "plus.circle.dashed")
-                        Image(systemName: "square.and.pencil")
+                        Button(action: onStories) { Image(systemName: "plus.circle.dashed") }
+                        Button(action: onCompose) { Image(systemName: "square.and.pencil") }
                     }
+                    .buttonStyle(.plain)
                     .font(.system(size: 19))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 16)
@@ -139,14 +180,18 @@ struct TopBar: View {
                     .glass(Capsule(), interactive: true)
                 }
 
-                HStack(spacing: 6) {
-                    StoryStack(images: ["avatar_bit16", "avatar_dog", "avatar_pepe"])
-                    Text("Chats")
-                        .font(.system(size: 19, weight: .semibold))
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color.tgBlue)
+                Button(action: onStories) {
+                    HStack(spacing: 6) {
+                        StoryStack(images: ["avatar_bit16", "avatar_dog", "avatar_pepe"])
+                        Text("Chats")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(.black)
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.tgBlue)
+                    }
                 }
+                .buttonStyle(.plain)
             }
 
             FolderBar(store: store, selection: $folder)
@@ -200,6 +245,7 @@ struct FolderBar: View {
                             Text("\(badge.count)")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(badge.muted ? Color.black.opacity(0.75) : Color.white)
+                                .contentTransition(.numericText())
                                 .padding(.horizontal, badge.count > 9 ? 5 : 0)
                                 .frame(minWidth: 20, minHeight: 20)
                                 .background(Capsule().fill(badge.muted ? Color(hex: 0xDCDCE0) : Color.tgBlue))
@@ -224,90 +270,11 @@ struct FolderBar: View {
     }
 }
 
-// MARK: - Нижний таб-бар
-
-enum MainTab: String, CaseIterable {
-    case contacts = "Contacts"
-    case calls = "Calls"
-    case chats = "Chats"
-    case settings = "Settings"
-
-    var icon: String {
-        switch self {
-        case .contacts: return "person.crop.circle.fill"
-        case .calls: return "phone.fill"
-        case .chats: return "bubble.left.and.bubble.right.fill"
-        case .settings: return "gearshape.fill"
-        }
-    }
-}
-
-struct BottomTabBar: View {
-    @Binding var selection: MainTab
-    @Namespace private var namespace
-
-    var body: some View {
-        GlassGroup(spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 0) {
-                    ForEach(MainTab.allCases, id: \.self) { tab in
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { selection = tab }
-                        } label: {
-                            VStack(spacing: 2) {
-                                Image(systemName: tab.icon)
-                                    .font(.system(size: 21, weight: .medium))
-                                    .frame(height: 26)
-                                Text(tab.rawValue)
-                                    .font(.system(size: 10, weight: .semibold))
-                            }
-                            .foregroundStyle(selection == tab ? Color.tgBlue : Color.primary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 54)
-                            .background {
-                                if selection == tab {
-                                    Capsule()
-                                        .fill(Color.black.opacity(0.07))
-                                        .matchedGeometryEffect(id: "tab", in: namespace)
-                                }
-                            }
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(4)
-                .glass(Capsule())
-
-                Button {} label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 21, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .frame(width: 62, height: 62)
-                        .contentShape(Circle())
-                        .glass(Circle(), interactive: true)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 22)
-        .background(alignment: .bottom) {
-            LinearGradient(colors: [Color.white.opacity(0), Color.white.opacity(0.9)], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-        }
-    }
-}
-
-// MARK: - Строка чата
+// MARK: - Строки
 
 struct ChatRow: View {
     let chat: Chat
-
-    private var previewText: String {
-        guard let message = chat.lastMessage else { return "" }
-        return message.video != nil ? "Video message" : message.text
-    }
+    var isTyping = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -323,8 +290,9 @@ struct ChatRow: View {
                     Spacer(minLength: 4)
                     VStack(alignment: .trailing, spacing: 0) {
                         HStack(spacing: 3) {
-                            if chat.lastMessage?.isOutgoing == true {
-                                DoubleCheck(size: 11).foregroundStyle(Color.tgBlue)
+                            if let last = chat.lastMessage, last.isOutgoing {
+                                StatusIcon(status: last.status, size: 11)
+                                    .foregroundStyle(Color.tgBlue)
                             }
                             Text(chat.lastMessage?.time ?? "")
                                 .font(.system(size: 15))
@@ -368,10 +336,13 @@ struct ChatRow: View {
 
     @ViewBuilder
     private var preview: some View {
-        if let sender = chat.sender {
+        let text = chat.lastMessage?.previewText ?? ""
+        if isTyping {
+            TypingLabel(text: chat.kind == .group ? "Pepe is typing" : "typing")
+        } else if let sender = chat.sender {
             VStack(alignment: .leading, spacing: 0) {
                 Text(sender).foregroundStyle(.black)
-                Text(previewText).foregroundStyle(Color.tgGray).lineLimit(1)
+                Text(text).foregroundStyle(Color.tgGray).lineLimit(1)
             }
             .font(.system(size: 16))
         } else {
@@ -382,7 +353,7 @@ struct ChatRow: View {
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                         .padding(.top, 1)
                 }
-                Text(previewText)
+                Text(text)
                     .font(.system(size: 16))
                     .foregroundStyle(Color.tgGray)
                     .lineLimit(2)
@@ -390,7 +361,6 @@ struct ChatRow: View {
         }
     }
 
-    @ViewBuilder
     private var accessory: some View {
         HStack(spacing: 8) {
             if chat.hasOpenButton {
@@ -405,6 +375,7 @@ struct ChatRow: View {
                 Text("\(chat.unread)")
                     .font(.system(size: 14))
                     .foregroundStyle(chat.isMuted ? Color.black.opacity(0.75) : Color.white)
+                    .contentTransition(.numericText())
                     .padding(.horizontal, chat.unread > 9 ? 5 : 0)
                     .frame(minWidth: 21, minHeight: 21)
                     .background(Capsule().fill(chat.isMuted ? Color(hex: 0xE3E3E8) : Color.tgBlue))
@@ -419,52 +390,302 @@ struct ChatRow: View {
     }
 }
 
-// MARK: - Полный чат
-
-struct ChatScreen: View {
-    let store: ChatStore
-    let chatID: Chat.ID
-
-    @State private var draft = ""
-    @FocusState private var focused: Bool
+struct ArchiveRow: View {
+    let chats: [Chat]
 
     var body: some View {
-        if let chat = store.chat(chatID) {
-            MessagesList(messages: chat.messages)
-                .background(ChatWallpaper().ignoresSafeArea())
-                .safeAreaInset(edge: .bottom) {
-                    InputBar(draft: $draft, focused: $focused, onSend: send)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 6)
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(Color(hex: 0xB4B4BA))
+                .overlay(
+                    Image(systemName: "archivebox.fill")
+                        .font(.system(size: 25))
+                        .foregroundStyle(.white)
+                )
+                .frame(width: 60, height: 60)
+                .padding(2)
+                .padding(.top, 7)
+
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Archived Chats")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.black)
+                    Text(chats.map(\.name).joined(separator: ", "))
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.tgGray)
+                        .lineLimit(2)
                 }
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        VStack(spacing: 0) {
-                            HStack(spacing: 3) {
-                                Text(chat.name).font(.system(size: 16, weight: .semibold))
-                                NameBadgeView(badge: chat.badge, size: 13)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 9)
+                .padding(.trailing, 16)
+
+                Rectangle().fill(Color.tgSeparator).frame(height: 0.5).padding(.trailing, 16)
+            }
+        }
+        .padding(.leading, 9)
+        .frame(height: 78)
+        .background(Color.white)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Архив
+
+struct ArchiveView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let store: ChatStore
+    var onOpen: (Chat.ID) -> Void
+
+    var body: some View {
+        List {
+            ForEach(store.archivedChats) { chat in
+                Button { onOpen(chat.id) } label: {
+                    ChatRow(chat: chat, isTyping: store.typing.contains(chat.id))
+                }
+                .buttonStyle(RowPressStyle())
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.white)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button {
+                        withAnimation { store.setArchived(chat.id, false) }
+                        model.showToast("Chat unarchived", icon: "tray.and.arrow.up")
+                    } label: {
+                        Label("Unarchive", systemImage: "tray.and.arrow.up.fill")
+                    }
+                    .tint(Color.tgBlue)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.white)
+        .environment(\.defaultMinListRowHeight, 0)
+        .overlay {
+            if store.archivedChats.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "archivebox").font(.system(size: 44)).foregroundStyle(Color.tgGray)
+                    Text("No archived chats").foregroundStyle(Color.tgGray)
+                }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GlassHeader(onBack: { dismiss() }) {
+                Text("Archived Chats").font(.system(size: 16, weight: .semibold))
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+// MARK: - Новое сообщение
+
+struct NewMessageView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
+    let store: ChatStore
+    var onSelect: (Chat.ID) -> Void
+
+    @State private var query = ""
+
+    private var contacts: [Chat] {
+        let people = store.people.sorted { $0.name < $1.name }
+        return query.isEmpty ? people : people.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    action("person.2.fill", "New Group")
+                    action("lock.fill", "New Secret Chat")
+                    action("megaphone.fill", "New Channel")
+                }
+                Section("Contacts") {
+                    ForEach(contacts) { contact in
+                        Button { onSelect(contact.id) } label: {
+                            HStack(spacing: 12) {
+                                Avatar(chat: contact, size: 42)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(contact.name).foregroundStyle(.black)
+                                    Text(contact.status)
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(contact.isOnline ? Color.tgBlue : Color.tgGray)
+                                }
                             }
-                            Text(chat.status).font(.system(size: 12)).foregroundStyle(Color.tgGray)
                         }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Avatar(chat: chat, size: 38)
-                    }
                 }
-                .onAppear {
-                    store.update(chatID) { $0.unread = 0 }
+            }
+            .searchable(text: $query)
+            .navigationTitle("New Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
+            }
         }
     }
 
-    private func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft = ""
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            store.send(text, to: chatID)
+    private func action(_ icon: String, _ title: String) -> some View {
+        Button {
+            model.showToast("\(title) is coming soon", icon: icon)
+        } label: {
+            Label(title, systemImage: icon).foregroundStyle(Color.tgBlue)
         }
-        focused = true
+    }
+}
+
+// MARK: - Истории
+
+struct StoryViewer: View {
+    @Environment(\.dismiss) private var dismiss
+
+    struct Story {
+        let image: String
+        let name: String
+        let caption: String
+        let colors: [Color]
+    }
+
+    private let stories: [Story] = [
+        Story(image: "avatar_bit16", name: "16Bit Team", caption: "We're live! Come watch 🍓",
+              colors: [Color(hex: 0xFF5E7E), Color(hex: 0xFF9A6B)]),
+        Story(image: "avatar_dog", name: "Dog", caption: "Found the lunch spot 🍝",
+              colors: [Color(hex: 0x4FC3F7), Color(hex: 0x6A7CFF)]),
+        Story(image: "avatar_pepe", name: "Pepe", caption: "Feels good man 🐸",
+              colors: [Color(hex: 0x7ED957), Color(hex: 0x2FB37A)]),
+    ]
+
+    @State private var index = 0
+    @State private var progress: Double = 0
+    @State private var dragY: CGFloat = 0
+    @State private var reply = ""
+    @FocusState private var replyFocused: Bool
+
+    private let timer = Timer.publish(every: 0.03, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        let story = stories[index]
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            ZStack {
+                LinearGradient(colors: story.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                AssetImage(name: story.image)
+                    .frame(width: 250, height: 250)
+                    .shadow(color: .black.opacity(0.25), radius: 30, y: 10)
+                    .id(story.image)
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                VStack {
+                    Spacer()
+                    Text(story.caption)
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(radius: 8)
+                        .padding(.bottom, 110)
+                }
+                HStack(spacing: 0) {
+                    Color.clear.contentShape(Rectangle()).onTapGesture { previous() }
+                    Color.clear.contentShape(Rectangle()).onTapGesture { next() }
+                }
+                .padding(.vertical, 90)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(alignment: .top) { header(story) }
+            .overlay(alignment: .bottom) { replyBar }
+            .padding(.top, 4)
+        }
+        .offset(y: dragY)
+        .scaleEffect(1 - dragY / 2000)
+        .gesture(
+            DragGesture()
+                .onChanged { dragY = max(0, $0.translation.height) }
+                .onEnded { value in
+                    if value.translation.height > 120 {
+                        dismiss()
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { dragY = 0 }
+                    }
+                }
+        )
+        .onReceive(timer) { _ in
+            guard dragY == 0, !replyFocused else { return }
+            progress += 0.03 / 4
+            if progress >= 1 { next() }
+        }
+        .animation(.easeInOut(duration: 0.25), value: index)
+        .statusBarHidden()
+    }
+
+    private func header(_ story: Story) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                ForEach(stories.indices, id: \.self) { i in
+                    GeometryReader { geo in
+                        Capsule()
+                            .fill(Color.white.opacity(0.35))
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(Color.white).frame(width: geo.size.width * fill(for: i))
+                            }
+                    }
+                    .frame(height: 3)
+                }
+            }
+            HStack(spacing: 10) {
+                AssetImage(name: story.image).frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(story.name).font(.system(size: 15, weight: .semibold))
+                    Text("2h ago").font(.system(size: 12)).opacity(0.8)
+                }
+                .foregroundStyle(.white)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .glass(Circle(), interactive: true)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
+
+    private var replyBar: some View {
+        HStack(spacing: 8) {
+            TextField("Reply privately...", text: $reply)
+                .focused($replyFocused)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .frame(height: 46)
+                .glass(Capsule())
+            CircleButton(systemName: "heart", size: 46, tint: .white)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+    }
+
+    private func fill(for i: Int) -> Double {
+        i < index ? 1 : (i == index ? min(progress, 1) : 0)
+    }
+
+    private func next() {
+        if index < stories.count - 1 {
+            index += 1
+            progress = 0
+        } else {
+            dismiss()
+        }
+    }
+
+    private func previous() {
+        if index > 0 { index -= 1 }
+        progress = 0
     }
 }
