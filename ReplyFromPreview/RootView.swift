@@ -217,7 +217,7 @@ struct RootContent: View {
     private func deleteSelected() {
         guard !selected.isEmpty else { return }
         let count = selected.count
-        withAnimation { for id in selected { store.delete(id) } }
+        withAnimation { for id in selected { _ = store.delete(id) } }
         model.showToast(count == 1 ? "Chat deleted" : "\(count) chats deleted", icon: "trash")
         finishEditing()
     }

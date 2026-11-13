@@ -140,7 +140,7 @@ struct ChatPreviewOverlay: View {
                 close()
             }
             MenuRow(title: "Delete", icon: "trash", destructive: true) {
-                close { withAnimation(spring) { store.delete(chatID) } }
+                close { withAnimation(spring) { _ = store.delete(chatID) } }
             }
         }
         .padding(.vertical, 8)
