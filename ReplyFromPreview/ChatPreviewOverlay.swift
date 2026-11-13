@@ -39,7 +39,8 @@ struct ChatPreviewOverlay: View {
                 if let chat = store.chat(chatID) {
                     VStack(spacing: 10) {
                         card(chat)
-                            .frame(maxHeight: expanded ? .infinity : min(470, geo.size.height * 0.56))
+                            // Место под поле ввода и меню, чтобы всё влезало и на маленьких iPhone.
+                            .frame(maxHeight: expanded ? .infinity : max(220, min(470, geo.size.height - 300)))
 
                         InputBar(draft: $draft, focused: $focused, onSend: send)
 
@@ -139,7 +140,7 @@ struct ChatPreviewOverlay: View {
             }
         }
         .padding(.vertical, 6)
-        .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .glass(RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
     // MARK: - Жесты и действия

@@ -10,6 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select Xcode 26 (Liquid Glass SDK)
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "Xcode 26 not found"; exit 1; fi
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

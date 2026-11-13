@@ -3,12 +3,37 @@ import SwiftUI
 // MARK: - Стекло
 
 extension View {
-    /// Полупрозрачная «стеклянная» подложка. На iOS 26 можно заменить на .glassEffect().
-    func glass<S: Shape>(_ shape: S) -> some View {
-        self
-            .background(.regularMaterial, in: shape)
-            .overlay(shape.stroke(Color.white.opacity(0.45), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+    /// Liquid Glass на iOS 26, на старых версиях — материал с обводкой.
+    @ViewBuilder
+    func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
+        } else {
+            self
+                .background {
+                    if let tint {
+                        shape.fill(tint)
+                    } else {
+                        shape.fill(.regularMaterial)
+                    }
+                }
+                .overlay(shape.stroke(Color.white.opacity(0.45), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+        }
+    }
+}
+
+/// Группа стеклянных элементов: на iOS 26 они «сливаются» и перетекают друг в друга.
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 10
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
     }
 }
 
@@ -22,7 +47,8 @@ struct CircleButton: View {
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.primary)
                 .frame(width: 40, height: 40)
-                .glass(Circle())
+                .contentShape(Circle())
+                .glass(Circle(), interactive: true)
         }
         .buttonStyle(.plain)
     }
@@ -205,36 +231,39 @@ struct InputBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            CircleButton(systemName: "paperclip")
+        GlassGroup(spacing: 8) {
+            HStack(spacing: 8) {
+                CircleButton(systemName: "paperclip")
 
-            HStack {
-                TextField("Message", text: $draft)
-                    .font(.system(size: 17))
-                    .focused(focused)
-                    .submitLabel(.send)
-                    .onSubmit(onSend)
-                Image(systemName: "face.smiling")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
-            .glass(Capsule())
+                HStack {
+                    TextField("Message", text: $draft)
+                        .font(.system(size: 17))
+                        .focused(focused)
+                        .submitLabel(.send)
+                        .onSubmit(onSend)
+                    Image(systemName: "face.smiling")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 40)
+                .glass(Capsule())
 
-            ZStack {
-                if canSend {
-                    Button(action: onSend) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(Color(hex: 0x2AABEE)))
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.scale.combined(with: .opacity))
-                } else {
-                    CircleButton(systemName: "mic")
+                ZStack {
+                    if canSend {
+                        Button(action: onSend) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .contentShape(Circle())
+                                .glass(Circle(), tint: Color(hex: 0x2AABEE), interactive: true)
+                        }
+                        .buttonStyle(.plain)
                         .transition(.scale.combined(with: .opacity))
+                    } else {
+                        CircleButton(systemName: "mic")
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
             }
         }

@@ -15,7 +15,7 @@ struct ChatListView: View {
     @State private var frames = FrameStore()
     @State private var preview: PreviewState?
     @State private var openedChat: Chat.ID?
-    @State private var pressed: Chat.ID?
+    @State private var suppressTap = false
     @State private var hapticTick = 0
 
     var body: some View {
@@ -40,10 +40,14 @@ struct ChatListView: View {
                     chatID: preview.id,
                     sourceFrame: preview.frame,
                     currentFrame: { frames.frames[preview.id] },
-                    onClose: { self.preview = nil },
+                    onClose: {
+                        self.preview = nil
+                        suppressTap = false
+                    },
                     onOpen: {
                         openedChat = preview.id
                         self.preview = nil
+                        suppressTap = false
                     }
                 )
                 .zIndex(1)
@@ -52,25 +56,42 @@ struct ChatListView: View {
         .sensoryFeedback(.impact(weight: .medium), trigger: hapticTick)
     }
 
+    /// Кнопка + долгое нажатие поверх неё: так список нормально скроллится,
+    /// а после долгого нажатия обычный тап не открывает чат.
     private func row(_ chat: Chat) -> some View {
-        ChatRow(chat: chat)
-            .scaleEffect(pressed == chat.id ? 0.97 : 1)
-            .opacity(preview?.id == chat.id ? 0 : 1)
-            .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .global)
-            } action: { frame in
-                frames.frames[chat.id] = frame
+        Button {
+            if suppressTap {
+                suppressTap = false
+                return
             }
-            .onTapGesture { openedChat = chat.id }
-            .onLongPressGesture(minimumDuration: 0.3) {
+            openedChat = chat.id
+        } label: {
+            ChatRow(chat: chat)
+        }
+        .buttonStyle(RowPressStyle())
+        .opacity(preview?.id == chat.id ? 0 : 1)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: { frame in
+            frames.frames[chat.id] = frame
+        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                guard preview == nil else { return }
+                suppressTap = true
                 hapticTick += 1
-                pressed = nil
                 preview = PreviewState(id: chat.id, frame: frames.frames[chat.id] ?? .zero)
-            } onPressingChanged: { isPressing in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    pressed = isPressing ? chat.id : nil
-                }
             }
+        )
+    }
+}
+
+struct RowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay(Color.primary.opacity(configuration.isPressed ? 0.06 : 0))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.2), value: configuration.isPressed)
     }
 }
 
@@ -90,6 +111,7 @@ struct ChatRow: View {
                 HStack(spacing: 4) {
                     Text(chat.name)
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                     if chat.isMuted {
                         Image(systemName: "speaker.slash.fill")
