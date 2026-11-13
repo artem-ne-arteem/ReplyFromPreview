@@ -188,12 +188,30 @@ struct ChatWallpaper: View {
                            "leaf", "star", "gift", "airplane", "heart", "paintbrush", "fish",
                            "umbrella", "balloon", "moon", "bicycle"]
 
+    /// Своя картинка обоев: файл Backgrounds.png в папке ReplyFromPreview.
+    private static let customImage = UIImage(named: "Backgrounds")
+
     var body: some View {
         ZStack {
             LinearGradient(
                 colors: [Color(hex: 0xCFE0A4), Color(hex: 0x97BD7E), Color(hex: 0xB9D08F)],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
+            if let image = Self.customImage {
+                Color.clear
+                    .overlay(
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    )
+                    .clipped()
+            } else {
+                doodles
+            }
+        }
+    }
+
+    private var doodles: some View {
             Canvas { context, size in
                 context.opacity = 0.17
                 let step: CGFloat = 56
@@ -215,7 +233,6 @@ struct ChatWallpaper: View {
                     row += 1
                 }
             }
-        }
     }
 }
 
