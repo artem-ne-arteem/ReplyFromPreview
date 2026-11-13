@@ -6,7 +6,12 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Две очереди сразу: Apple Silicon и Intel. Какая освободится раньше, та и соберёт.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,5 +49,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ReplyFromPreview-ipa
+          name: ReplyFromPreview-ipa-${{ matrix.runner }}
           path: ReplyFromPreview.ipa
