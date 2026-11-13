@@ -31,7 +31,7 @@ struct ChatPreviewOverlay: View {
             ZStack {
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(0.08))
+                    .overlay(Color(hex: 0x9A9A9F).opacity(0.25))
                     .ignoresSafeArea()
                     .opacity(appeared ? max(0.3, 1 - dragOffset / 500) : 0)
                     .onTapGesture { close() }
@@ -40,7 +40,7 @@ struct ChatPreviewOverlay: View {
                     VStack(spacing: 10) {
                         card(chat)
                             // Место под поле ввода и меню, чтобы всё влезало и на маленьких iPhone.
-                            .frame(maxHeight: expanded ? .infinity : max(220, min(470, geo.size.height - 300)))
+                            .frame(maxHeight: expanded ? .infinity : max(220, min(480, geo.size.height - 300)))
 
                         InputBar(draft: $draft, focused: $focused, onSend: send)
 
@@ -49,7 +49,7 @@ struct ChatPreviewOverlay: View {
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 6)
                     .frame(maxHeight: .infinity)
                     .scaleEffect(appeared ? 1 : 0.35)
@@ -75,7 +75,7 @@ struct ChatPreviewOverlay: View {
         ZStack(alignment: .top) {
             ChatWallpaper()
 
-            MessagesList(messages: chat.messages, topInset: 66)
+            MessagesList(messages: chat.messages, topInset: 70)
                 .mask(
                     LinearGradient(
                         stops: [
@@ -89,28 +89,32 @@ struct ChatPreviewOverlay: View {
 
             header(chat)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
     }
 
     private func header(_ chat: Chat) -> some View {
         HStack {
-            CircleButton(systemName: "chevron.left") { close() }
+            CircleButton(systemName: "chevron.left", size: 44) { close() }
             Spacer()
             VStack(spacing: 0) {
-                Text(chat.name)
-                    .font(.system(size: 15, weight: .semibold))
+                HStack(spacing: 3) {
+                    Text(chat.name)
+                        .font(.system(size: 16, weight: .semibold))
+                    NameBadgeView(badge: chat.badge, size: 14)
+                }
                 Text(chat.status)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.tgGray)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 22)
+            .frame(height: 44)
             .glass(Capsule())
             Spacer()
-            Avatar(chat: chat, size: 40)
+            Avatar(chat: chat, size: 46)
         }
-        .padding(10)
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
         .contentShape(Rectangle())
         .onTapGesture { open() }
         .gesture(dragToDismiss)
@@ -139,8 +143,8 @@ struct ChatPreviewOverlay: View {
                 close { withAnimation(spring) { store.delete(chatID) } }
             }
         }
-        .padding(.vertical, 6)
-        .glass(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.vertical, 8)
+        .glass(RoundedRectangle(cornerRadius: 30, style: .continuous))
     }
 
     // MARK: - Жесты и действия

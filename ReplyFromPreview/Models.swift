@@ -6,20 +6,49 @@ struct Message: Identifiable, Hashable {
     var text: String
     var isOutgoing: Bool
     var time: String
+    /// Видеосообщение-кружок: имя картинки и длительность.
+    var video: String? = nil
+    var duration: String? = nil
+}
+
+enum NameBadge: Hashable {
+    case none
+    case star
+    case verified
+    case emoji(String)
+}
+
+enum Folder: String, CaseIterable, Hashable {
+    case all = "All"
+    case groups = "Groups"
+    case work = "WORK"
+    case bots = "Bots"
 }
 
 struct Chat: Identifiable, Hashable {
     let id = UUID()
     var name: String
-    var emoji: String
-    var color: Color
+    /// Картинка аватара из Assets; без неё рисуются инициалы.
+    var avatar: String? = nil
+    var color: Color = .blue
+    var badge: NameBadge = .none
     var status: String
     var messages: [Message]
     var unread: Int = 0
-    var isPinned: Bool = false
-    var isMuted: Bool = false
+    var isPinned = false
+    var isMuted = false
+    /// Имя автора последнего сообщения в группе.
+    var sender: String? = nil
+    /// Миниатюра вложения в превью последнего сообщения.
+    var thumbnail: String? = nil
+    var hasOpenButton = false
+    var folders: Set<Folder> = []
 
     var lastMessage: Message? { messages.last }
+
+    var initials: String {
+        name.split(separator: " ").prefix(2).compactMap { $0.first }.map(String.init).joined()
+    }
 }
 
 @Observable
@@ -28,6 +57,16 @@ final class ChatStore {
 
     func chat(_ id: Chat.ID) -> Chat? {
         chats.first { $0.id == id }
+    }
+
+    func chats(in folder: Folder) -> [Chat] {
+        folder == .all ? chats : chats.filter { $0.folders.contains(folder) }
+    }
+
+    /// Сколько непрочитанных в папке и все ли они в чатах без звука.
+    func badge(for folder: Folder) -> (count: Int, muted: Bool) {
+        let list = chats(in: folder).filter { $0.unread > 0 }
+        return (list.reduce(0) { $0 + $1.unread }, list.allSatisfy(\.isMuted))
     }
 
     func update(_ id: Chat.ID, _ change: (inout Chat) -> Void) {
@@ -41,7 +80,11 @@ final class ChatStore {
         var chat = chats.remove(at: index)
         chat.messages.append(Message(text: text, isOutgoing: true, time: Self.now()))
         chat.unread = 0
-        let target = chat.isPinned ? 0 : (chats.firstIndex { !$0.isPinned } ?? chats.count)
+        chat.sender = nil
+        chat.thumbnail = nil
+        let target = chat.isPinned
+            ? (chats.firstIndex { $0.isPinned } ?? 0)
+            : (chats.firstIndex { !$0.isPinned } ?? chats.count)
         chats.insert(chat, at: target)
     }
 
@@ -56,7 +99,7 @@ final class ChatStore {
 
     private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        formatter.dateFormat = "H:mm"
         return formatter
     }()
 
@@ -71,61 +114,80 @@ extension Color {
             blue: Double(hex & 0xFF) / 255
         )
     }
+
+    static let tgBlue = Color(hex: 0x007AFF)
+    static let tgGray = Color(hex: 0x8E8E93)
+    static let tgSeparator = Color(hex: 0xD9D9DE)
+    static let tgPinned = Color(hex: 0xF2F2F7)
+    static let tgOutgoing = Color(hex: 0xEFFEDD)
 }
 
 extension Chat {
     static let samples: [Chat] = [
         Chat(
-            name: "Cat", emoji: "😼", color: Color(hex: 0xF5873A), status: "last seen just now",
+            name: "Saved Messages", avatar: "avatar_saved", status: "your cloud storage",
+            messages: [Message(text: "IMG_420.png", isOutgoing: false, time: "Fri")],
+            isPinned: true, thumbnail: "thumb_img420"
+        ),
+        Chat(
+            name: "Cat", avatar: "avatar_cat", badge: .star, status: "last seen just now",
             messages: [
-                Message(text: "Let's play Monopoly tonight?", isOutgoing: true, time: "9:30"),
-                Message(text: "Advance to Illinois Ave. If you pass Go, collect coffee", isOutgoing: false, time: "9:38"),
-                Message(text: "Passed!", isOutgoing: false, time: "9:39"),
+                Message(text: "Advance to Illinois Ave. If you pass Go, collect coffee", isOutgoing: true, time: "9:38"),
+                Message(text: "Passed!", isOutgoing: false, time: "9:41"),
+                Message(text: "", isOutgoing: false, time: "9:41", video: "video_cat", duration: "0:04"),
                 Message(text: "Okay", isOutgoing: true, time: "9:41"),
                 Message(text: "Wait for me there.", isOutgoing: true, time: "9:41"),
-                Message(text: "I'm already here ☕️", isOutgoing: false, time: "9:44"),
-                Message(text: "Where are you?", isOutgoing: false, time: "9:45"),
+                Message(text: "Pepe says hi.", isOutgoing: true, time: "9:41"),
             ],
-            unread: 2, isPinned: true
+            isPinned: true
         ),
         Chat(
-            name: "Alicia Brown", emoji: "👩🏻‍🎨", color: Color(hex: 0xE0607E), status: "online",
+            name: "Pepe", avatar: "avatar_pepe", badge: .emoji("status_pepe"), status: "online",
             messages: [
-                Message(text: "Did you see the new exhibition?", isOutgoing: false, time: "18:02"),
-                Message(text: "Not yet! Is it worth it?", isOutgoing: true, time: "18:05"),
-                Message(text: "Totally. The light installations are magic ✨", isOutgoing: false, time: "18:06"),
-                Message(text: "Are you free tonight?", isOutgoing: false, time: "9:12"),
+                Message(text: "Did you talk to Cat today?", isOutgoing: true, time: "9:30"),
+                Message(text: "Say hello to Cat.", isOutgoing: false, time: "9:41"),
             ],
-            unread: 1
+            unread: 1, folders: [.work]
         ),
         Chat(
-            name: "Design Team", emoji: "🎨", color: Color(hex: 0x7B6CF6), status: "12 members",
+            name: "16Bit Team", avatar: "avatar_bit16", status: "1,204 members",
+            messages: [Message(text: "16Bit Team started a Live Stream", isOutgoing: false, time: "9:41")],
+            unread: 1, isMuted: true, folders: [.groups]
+        ),
+        Chat(
+            name: "Digital Nomads", avatar: "avatar_nomads", status: "2,500 members",
+            messages: [Message(text: "We just reached 2,500 members! WOO!", isOutgoing: false, time: "9:22")],
+            isMuted: true, sender: "Pepe", folders: [.groups]
+        ),
+        Chat(
+            name: "Dog", avatar: "avatar_dog", badge: .emoji("status_dog"), status: "last seen recently",
+            messages: [Message(text: "Table for four, 2 PM be there", isOutgoing: false, time: "9:12")]
+        ),
+        Chat(
+            name: "Penguin", avatar: "avatar_penguin", status: "last seen 5 minutes ago",
             messages: [
-                Message(text: "New icons are in Figma", isOutgoing: false, time: "8:40"),
-                Message(text: "Can someone review the onboarding flow before lunch?", isOutgoing: false, time: "8:55"),
+                Message(text: "Got the photos from the trip?", isOutgoing: true, time: "8:20"),
+                Message(text: "Check these out!", isOutgoing: false, time: "8:28"),
             ],
-            unread: 5
+            unread: 1, folders: [.work]
         ),
         Chat(
-            name: "Mom", emoji: "🌷", color: Color(hex: 0x4FBF6B), status: "last seen recently",
-            messages: [
-                Message(text: "Don't forget to call grandma", isOutgoing: false, time: "Wed"),
-                Message(text: "Will do ❤️", isOutgoing: true, time: "Wed"),
-            ]
+            name: "Wallet", avatar: "avatar_wallet", badge: .verified, status: "bot",
+            messages: [Message(text: "Welcome to Crypto Wallet!\n...", isOutgoing: false, time: "8:12")],
+            unread: 1, hasOpenButton: true, folders: [.bots]
         ),
         Chat(
-            name: "Bake House", emoji: "🥐", color: Color(hex: 0xE8A93A), status: "channel",
-            messages: [
-                Message(text: "Lunch special: fresh pasta with basil, only today.", isOutgoing: false, time: "Tue"),
-            ],
-            unread: 3, isMuted: true
+            name: "Alicia Brown", color: Color(hex: 0xF0648A), status: "online",
+            messages: [Message(text: "Are you free tonight?", isOutgoing: false, time: "Thu")]
         ),
         Chat(
-            name: "Max", emoji: "🧑🏽‍💻", color: Color(hex: 0x3E9BE0), status: "last seen yesterday",
-            messages: [
-                Message(text: "Sending you the build now", isOutgoing: false, time: "Mon"),
-                Message(text: "Thanks!", isOutgoing: true, time: "Mon"),
-            ]
+            name: "Design Team", color: Color(hex: 0x8E7CF8), status: "12 members",
+            messages: [Message(text: "New icons are in Figma", isOutgoing: false, time: "Wed")],
+            sender: "Max", folders: [.groups, .work]
+        ),
+        Chat(
+            name: "Mom", color: Color(hex: 0x5BC86E), status: "last seen recently",
+            messages: [Message(text: "Don't forget to call grandma ❤️", isOutgoing: false, time: "Tue")]
         ),
     ]
 }
